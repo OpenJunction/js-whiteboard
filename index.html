@@ -1,0 +1,75 @@
+<html>
+  <head>
+
+    <title>Whiteboard</title>
+
+    <script type="text/javascript" 
+            src="http://ajax.googleapis.com/ajax/libs/swfobject/2.2/swfobject.js"></script>   
+
+    <script type="text/javascript" 
+            src="http://ajax.googleapis.com/ajax/libs/jquery/1.4.2/jquery.min.js"></script>    
+
+    <script language="javascript" type="text/javascript" 
+            src="http://prpl.stanford.edu/junction/junction/json2.js"></script>
+
+    <script language="javascript" type="text/javascript" src="js/strophejs-1.0.1/b64.js"></script>
+
+    <script language="javascript" type="text/javascript" src="js/strophejs-1.0.1/md5.js"></script>
+
+    <script language="javascript" type="text/javascript" src="js/strophejs-1.0.1/sha1.js"></script>
+
+    <script language="javascript" type="text/javascript" src="js/strophejs-1.0.1/strophe.js"></script>
+
+    <script language="javascript" type="text/javascript" src="js/junction.js"></script>
+
+    <script language="javascript" type="text/javascript" src="js/props2.js"></script>
+
+    <script language="javascript" type="text/javascript" src="js/board_prop.js"></script>
+
+    <script type="text/javascript" src="js/colorpicker.js"></script>
+
+    <script type="text/javascript" src="js/board.js"></script>
+
+    <link rel="stylesheet" href="css/main.css" type="text/css"/>
+
+    <link rel="stylesheet" media="screen" type="text/css" href="css/colorpicker.css" />
+
+  </head>
+
+  <body>
+    <center> 
+      <div id="tools">
+	<table id="toolTable">
+	  <tr>
+	    <td><div id="colorSelector"><div style="background-color: #0000ff"></div></div></td>
+	    <td></td>
+	    <td></td>
+	    <td><div class="color" id="color1"></div></td>
+	    <td><div class="color" id="color2"></div></td>
+	    <td><div class="color" id="color3"></div></td>
+	    <td><div class="color" id="color4"></div></td>
+	    <td><div class="color" id="color5"></div></td>
+	    <td></td>
+	    <td></td>
+	    <td><div class="brush" id="brush1"></div></td>
+	    <td><div class="brush" id="brush2"></div></td>
+	    <td><div class="brush" id="brush3"></div></td>
+	    <td><div class="brush" id="brush4"></div></td>
+	  </tr>
+	</table>
+      </div>
+      <canvas id="board" width="800" height="600"></canvas>
+      <div>
+	<a href="#" id="permalink">permalink</a>
+      </div>
+    </center>
+
+    <script type="text/javascript">
+      DrawingBoard.init($("#board")[0], "board");
+    </script>
+
+
+
+  </body>
+  
+</html>
