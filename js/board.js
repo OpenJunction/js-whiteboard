@@ -224,7 +224,7 @@ var DrawingBoard =
 
 
 				 var ascript = {
-					 host: "sb.openjunction.org",
+					 host: "openjunction.org",
 					 ad: "edu.stanford.junction.whiteboard",
 					 friendlyName: "White Board",
 					 roles: { "buddy": {"platforms" : { /* platform definitions */ }}},
