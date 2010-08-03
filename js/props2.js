@@ -18,12 +18,11 @@ var JunctionProps = new (
 					this.MODE_SYNC = 2;
 
 					this.MSG_STATE_OPERATION = 1;
-					this.MSG_STATE_SYNC = 2;
-					this.MSG_WHO_HAS_STATE = 3;
-					this.MSG_I_HAVE_STATE = 4;
-					this.MSG_SEND_ME_STATE = 5;
-					this.MSG_PLZ_CATCHUP = 6;
-					this.MSG_HELLO = 8;
+					this.MSG_WHO_HAS_STATE = 2;
+					this.MSG_I_HAVE_STATE = 3;
+					this.MSG_SEND_ME_STATE = 4;
+					this.MSG_STATE_SYNC = 5;
+					this.MSG_HELLO = 6;
 
 					this.EVT_CHANGE = "change";
 					this.EVT_SYNC = "sync";
@@ -37,14 +36,54 @@ var JunctionProps = new (
 					this.state = state;
 					this.cleanState = state.copy();
 
-					this.sequenceNum = this.NO_SEQ_NUM;
+					this.sequenceNum = 0;
+					this.lastOpUUID = "";
+
+					this.staleness = 0;
+
 					this.mode = this.MODE_NORM;
 					this.syncId = "";
 					this.waitingForIHaveState = false;
-					this.opsSYNC = [];
 
+					this.opsSYNC = [];
 					this.pendingLocals = [];
 					this.changeListeners = [];
+
+					this.timeOfLastSyncRequest = 0;
+					this.timeOfLastHello = 0;
+					this.active = false;
+
+					this.WAKEUP_INTERVAL = 1000;
+
+					var self = this;
+					setInterval(
+						function(){self.periodicTask();}, 
+						this.WAKEUP_INTERVAL);
+				},
+
+
+				periodicTask: function(){
+					var t = (new Date()).getTime();
+					if(this.active && this.actor != null &&
+					   // should be null if actor has 'left' the activity
+					   this.actor.junction != null 
+					  ){
+						  if(this.mode == this.MODE_NORM){
+							  if((t - this.timeOfLastHello) > 3000){
+								  this.sendHello();
+							  }
+						  }
+						  else if(this.mode == this.MODE_SYNC){
+							  if((t - this.timeOfLastSyncRequest) > 5000){
+								  this.broadcastSyncRequest();
+							  }
+						  }
+					  }
+				},
+
+
+				getStaleness: function(){
+					return this.staleness;
 				},
 
 
@@ -82,8 +121,15 @@ var JunctionProps = new (
 					this.actor.junction.logInfo("");
 				},
 
-				/*abstract*/ destringifyState: function(s){ scr(); },
-				/*abstract*/ destringifyOperation: function(s){ scr(); },
+				assertTrue: function(s, cond){
+					if(!cond){
+						this.logErr("ASSERTION FAILED: " + s);
+					}
+				},
+
+
+				/*abstract*/ reifyState: function(jsonObj){ this.scr(); },
+
 
 				addChangeListener: function(listener){
 					this.changeListeners.push(listener);
@@ -127,20 +173,26 @@ var JunctionProps = new (
 					var i;
 					var msg;
 					var changed = false;
-					if(opMsg.expectedSeqNum > this.sequenceNum + 1){
-						enterSYNCMode(opMsg.expectedSeqNum);
-						return;
-					}
-					this.sequenceNum = opMsg.seqNum;
-					this.pendingLocals = [];
-					if(isSelfMsg(opMsg)){
-						assert(this.opMsg.uuid == this.pendingLocals[0].uuid);
-						this.cleanState.applyOperation(opMsg);
-						this.pendingLocals.splice(0,1);
+					if(this.isSelfMsg(opMsg)){
+						this.staleness = this.sequenceNum - opMsg.localSeqNum;
+						this.cleanState.applyOperation(opMsg.op);
+
+						var foundIndex = -1;
+						var uuid = opMsg.uuid;
+						for(i = 0; i < this.pendingLocals.length; i++){
+							msg = this.pendingLocals[i];
+							if(msg.uuid == uuid){
+								foundIndex = i;
+								break;
+							}
+						}
+						if(foundIndex > -1){
+							this.pendingLocals.splice(foundIndex, 1);
+						}
 					}
 					else{
 						if(this.pendingLocals.length > 0){
-							this.cleanState.applyOperation(opMsg);
+							this.cleanState.applyOperation(opMsg.op);
 							this.state = this.cleanState.copy();
 							for(i = 0; i < this.pendingLocals.length; i++){
 								msg = this.pendingLocals[i];
@@ -148,38 +200,24 @@ var JunctionProps = new (
 							}
 						}
 						else{
-							assert(this.state.hash() == this.cleanState.hash());
-							this.cleanState.applyOperation(opMsg);
-							this.state.applyOperation(opMsg);
+							this.assertTrue("If pending locals is empty, state hash and cleanState hash should be equal.", 
+											this.state.hashCode() == this.cleanState.hashCode());
+							this.cleanState.applyOperation(opMsg.op);
+							this.state.applyOperation(opMsg.op);
 						}
 						changed = true;
 					}
 
+					this.lastOpUUID = opMsg.uuid;
+					this.sequenceNum += 1;
+
 					if(changed){
-						dispatchChangeNotification(this.EVT_CHANGE, null);
+						this.dispatchChangeNotification(this.EVT_CHANGE, null);
 					}
 
 					this.logState("Got op off wire, finished processing: " + opMsg);
 				},
 
-
-
-				
-				/**
-				 * Helper for sending off the serialized state to a peer.
-				 */
-				handleStateSyncRequest: function(m){
-					var sync = {
-						type: this.MSG_STATE_SYNC,
-						state: this.cleanState.stringify(),
-						syncId: m.syncId,
-						opSeqNum: this.sequenceNum,
-						seqNumCounter: this.seqNumCounter,
-						lastOrderAckUUID: this.lastOrderAckUUID,
-						lastOpUUID: this.lastOpUUID
-					};
-					this.sendMessageToPropReplica(m.senderActor, sync);
-				},
 
 				exitSYNCMode: function(){
 					this.logInfo("Exiting SYNC mode");
@@ -194,84 +232,56 @@ var JunctionProps = new (
 					this.syncId = randomUUID();
 					this.sequenceNum = -1;
 					clearArray(this.opsSYNC);
-					this.sendMessageToProp({ type: this.MSG_WHO_HAS_STATE, 
-											 desiredSeqNumber: desiredSeqNumber, 
-											 syncId: this.syncId});
 					this.waitingForIHaveState = true;
+					this.broadcastSyncRequest();
+				},
+
+				broadcastSyncRequest: function(){
+					this.timeOfLastSyncRequest = (new Date()).getTime();
+					this.sendMessageToProp(this.newWhoHasStateMsg(this.syncId));
 				},
 
 				isSelfMsg: function(msg){
 					return msg.senderReplicaUUID == this.uuid;
 				},
 
-				handleMessage: function(rawMsg){
-					var msgType = rawMsg.type;
-					var fromActor = rawMsg.senderActor;
+				handleMessage: function(msg){
+					var msgType = msg.type;
+					var fromActor = msg.senderActor;
 					switch(this.mode){
 					case this.MODE_NORM:
 						switch(msgType){
 						case this.MSG_STATE_OPERATION: {
-							var msg = rawMsg;
-							this.handleReceivedOp(msg.op);
+							this.handleReceivedOp(msg);
 							break;
 						}
-						case this.MSG_WHO_HAS_STATE:{
-							var msg = rawMsg;
+						case this.MSG_SEND_ME_STATE:{
 							if(!this.isSelfMsg(msg)){
-								// Can we fill the gap for this peer?
-								if(this.sequenceNum >= msg.desiredSeqNumber){
-									this.logInfo("Got WHO_HAS_STATE. Sending I_HAVE_STATE.");
-									this.sendMessageToPropReplica(
-										fromActor, 
-										{ type: this.MSG_I_HAVE_STATE,
-										  seqNum: this.sequenceNum,
-										  syncId: msg.syncId });
-								}
-								else{
-									this.logInfo("Oops! got state request for state i don't have!");
-								}
-							}
-							break;
-						}
-						case this.MSG_SEND_ME_STATE: {
-							var msg = rawMsg;
-							if(!this.isSelfMsg(msg)){
-								// Can we fill the gap for this peer?
-								if(this.sequenceNum >= msg.desiredSeqNumber){
-									this.logInfo("Handling SEND_ME_STATE request.");
-									this.handleStateSyncRequest(msg);
-								}
-							}
-							break;
-						}
-						case this.MSG_PLZ_CATCHUP:{
-							var msg = rawMsg;
-							if(!this.isSelfMsg(msg)){
-								// Some peer is trying to tell us we are stale.
-								// Do we believe them?
-								this.logInfo("Got PlzCatchup : " + msg);
-								if(msg.seqNum > this.sequenceNum) {
-									this.enterSYNCMode(msg.seqNum);
-								}
+								this.logInfo("Got SEND_ME_STATE");
+								var syncId = msg.syncId;
+								this.sendMessageToPropReplica(
+									fromActor, 
+									this.newStateSyncMsg(syncId));
 							}
 							break;
 						}
 						case this.MSG_HELLO:{
-							var msg = rawMsg;
-							if(!this.isSelfMsg(msg)){
-								if(msg.expectedSeqNum < this.sequenceNum){
-									this.sendMessageToPropReplica(
-										fromActor,
-										{type: this.MSG_PLZ_CATCHUP, 
-										 seqNum: this.sequenceNum});
-								}
+							this.logInfo("Got HELLO.");
+							if(!this.isSelfMsg(msg) && 
+							   msg.localSeqNum > this.sequenceNum) {
+								this.enterSYNCMode();
 							}
 							break;
 						}
-						case this.MSG_STATE_SYNC:
+						case this.MSG_WHO_HAS_STATE: {
+							if(!this.isSelfMsg(msg)){
+								this.logInfo("Got WHO_HAS_STATE.");
+								var syncId = msg.syncId;
+								this.sendMessageToPropReplica(
+									fromActor, this.newIHaveStateMsg(syncId));
+							}
 							break;
-						case this.MSG_I_HAVE_STATE:
-							break;
+						}
 						default:
 							this.logErr("NORM mode: Unrecognized message, "  + rawMsg);
 						}
@@ -279,75 +289,83 @@ var JunctionProps = new (
 					case this.MODE_SYNC:
 						switch(msgType){
 						case this.MSG_STATE_OPERATION:{
-							var msg = rawMsg;
-							if(!this.isSelfMsg(msg)){
-								this.opsSYNC.push(msg);
-								this.logInfo("SYNC mode: buffering op..");
-							}
-							else{
-								this.logInfo("SYNC mode: ignoring this op..");
-							}
+							this.opsSYNC.push(msg);
+							this.logInfo("SYNC mode: buffering op..");
 							break;
 						}
 						case this.MSG_I_HAVE_STATE:{
-							var msg = rawMsg;
-							if(!this.isSelfMsg(msg) && this.waitingForIHaveState){
-								if(msg.syncId == this.syncId && msg.seqNum > this.sequenceNum){
-									this.waitingForIHaveState = false;
-									this.logInfo("Got I_HAVE_STATE. Sending SEND_ME_STATE.");
-									this.sendMessageToPropReplica(
-										fromActor, 
-										{type: this.MSG_SEND_ME_STATE,
-										 desiredSeqNumber: msg.seqNum,
-										 syncId: msg.syncId
-										});
-								}
+							var syncId = msg.syncId;
+							if(!this.isSelfMsg(msg) && 
+							   this.waitingForIHaveState && syncId == this.syncId){
+								this.logInfo("Got I_HAVE_STATE.");
+								this.sendMessageToPropReplica(
+									fromActor, 
+									this.newSendMeStateMsg(syncId));
+								this.waitingForIHaveState = false;
 							}
 							break;
 						}
 						case this.MSG_STATE_SYNC:{
-							var msg = rawMsg;
 							if(!this.isSelfMsg(msg)){
-								// First check that this sync message corresponds to this
-								// instance of SYNC mode. This is critical for assumptions
-								// we make about the contents of incomingBuffer...
-								if(msg.syncId != this.syncId){
-									this.logInfo("Bogus SYNC nonce! ignoring StateSyncMsg");
+								// First check that this sync message 
+								// corresponds to the current
+								// SYNC mode...
+								var syncId = msg.syncId;
+								if(!(syncId == this.syncId)){
+									this.logErr("Bogus sync id! ignoring StateSyncMsg");
 								}
 								else{
-									this.logInfo("Got StateSyncMsg:" + msg);
-
-									this.cleanState = this.reifyState(msg.state);
-									this.sequenceNum = msg.opSeqNum;
-
-									this.logInfo("Installed state.");
-									this.logInfo("sequenceNum:" + this.sequenceNum);
-									this.logInfo("Now applying buffered things....");
-
-									// We may have applied some predictions locally.
-									// Just forget all these predictions (we're wiping our
-									// local state completely. 
-									clearArray(this.pendingLocals);
-
-									// Apply any ops that we recieved while syncing,
-									// ignoring those that are incorporated into sync state.
-									for(var j = 0; j < this.opsSYNC.length; j++){
-										var m = this.opsSYNC[j];
-										if(m.seqNum > this.sequenceNum){
-											this.handleReceivedOp(m);
-										}
-									}
-									clearArray(this.opsSYNC);
-
-									this.exitSYNCMode();
-									this.logState("Finished syncing.");
-									this.dispatchChangeNotification(this.EVT_SYNC, null);
+									this.handleStateSyncMsg(msg);
 								}
 							}
 							break;
 						}
+						default:{
+							this.logInfo("SYNC mode: Ignoring message, "  + msg);
+						}
 						}
 					}
+				},
+
+				/**
+				 * Install state received from peer.
+				 */
+				handleStateSyncMsg: function(msg){
+					this.logInfo("Got StateSyncMsg:" + msg);
+
+					this.logInfo("Reifying received state..");
+					this.cleanState = this.reifyState(msg.state);
+					this.logInfo("Copying clean to predicted..");
+					this.state = this.cleanState.copy();
+					this.sequenceNum = msg.seqNum;
+					this.lastOpUUID = msg.lastOpUUID;
+
+					this.logInfo("Installed state.");
+					this.logInfo("sequenceNum:" + this.sequenceNum);
+					this.logInfo("Now applying buffered things....");
+
+					// Forget all local predictions.
+					clearArray(this.pendingLocals);
+
+					// Apply any ops that we recieved while syncing,
+					// ignoring those that are already incorporated 
+					// into sync state.
+					var apply = false;
+					var i = 0;
+					for(i = 0; i < this.opsSYNC; i++){
+						var m = this.opsSYNC[i];
+						if(!apply && m.uuid == this.lastOpUUID){
+							apply = true;
+							continue;
+						}
+						else if(apply){
+							this.handleReceivedOp(m);
+						}
+					}
+					clearArray(this.opsSYNC);
+					this.exitSYNCMode();
+					this.logState("Finished syncing.");
+					this.dispatchChangeNotification(this.EVT_SYNC, null);
 				},
 
 
@@ -357,18 +375,17 @@ var JunctionProps = new (
 				addOperation: function(operation){
 					if(this.mode == this.MODE_NORM){
 						this.logInfo("Adding predicted operation.");
+						var msg = this.newStateOperationMsg(operation);
 						this.state.applyOperation(operation);
-						this.dispatchChangeNotification(this.EVT_CHANGE, null);
-						var msg = {
-							type: this.MSG_STATE_OPERATION, 
-							op: operation, 
-							predicted: true,
-							expectedSeqNum: this.sequenceNum + 1
-						};
+						this.dispatchChangeNotification(this.EVT_CHANGE, operation);
 						this.pendingLocals.push(msg);
-						this.logState("Requesting order ack: " + ack);
 						this.sendMessageToProp(msg);
 					}
+				},
+
+				sendHello: function(){
+					this.timeOfLastHello = (new Date()).getTime();
+					this.sendMessageToProp(this.newHelloMsg());
 				},
 
 
@@ -392,9 +409,63 @@ var JunctionProps = new (
 				},
 				
 				afterActivityJoin: function() {
-					this.sendMessageToProp({ type:this.MSG_HELLO, expectedSeqNum: this.sequenceNum + 1});
-				}
+					this.active = true;
+				},
 
+				newHelloMsg: function(){
+					var m = {
+						type: this.MSG_HELLO,
+						localSeqNum: this.sequenceNum
+					};
+					return m;
+				},
+
+
+				newIHaveStateMsg: function(syncId){
+					var m = {
+						type: this.MSG_I_HAVE_STATE,
+						syncId: syncId
+					};
+					return m;
+				},
+
+				newWhoHasStateMsg: function(syncId){
+					var m = {
+						type: this.MSG_WHO_HAS_STATE,
+						syncId: syncId
+					};
+					return m;
+				},
+
+				newStateOperationMsg: function(op){
+					var m = {
+						type: this.MSG_STATE_OPERATION,
+						op: op,
+						localSeqNum: this.sequenceNum,
+						uuid: randomUUID()
+					};
+					return m;
+				},
+
+
+				newStateSyncMsg: function(syncId){
+					var m = {
+						type: this.MSG_STATE_SYNC,
+						state: this.cleanState.toJSON(),
+						seqNum: this.sequenceNum,
+						lastOpUUID: this.lastOpUUID,
+						syncId: syncId
+					};
+					return m;
+				},
+
+				newSendMeStateMsg: function(syncId){
+					var m = {
+						type: this.MSG_SEND_ME_STATE,
+						syncId: syncId
+					};
+					return m;
+				}
 
 			});
 
@@ -403,164 +474,57 @@ var JunctionProps = new (
 		this.ListProp = this.Prop.extend(
 			{
 
-				init: function(propName, builder){
-					this._super(propName, new this.ListState(), null);
-					this.builder = builder;
-				},
-
-				/**
-				 * Assume o1 and o2 operate on the same state s.
-				 * 
-				 * Intent Preservation:
-				 * transposeForward(o1,o2) is a new operation, defined on the state resulting from the execution of o1, 
-				 * and realizing the same intention as op2.
-				 * 
-				 * Convergence:
-				 * It must hold that o1*transposeForward(o1,o2) = o2*transposeForward(o2,o1).
-				 *
-				 * (where oi*oj denotes the execution of oi followed by the execution of oj)
-				 * 
-				 */
-				transposeForward: function(o1, o2){
-					if(s1.item.equals(s2.item)){
-						if(s1 instanceof this.AddOp && s2 instanceof this.AddOp){
-							// No problem, Set semantics take care of everything.
-							return s1;
-						}
-						else if(s1 instanceof this.DeleteOp && s2 instanceof this.DeleteOp){
-							// No problem, just delete it..
-							return s1;
-						}
-						else if(s1 instanceof this.AddOp && s2 instanceof this.DeleteOp){
-							// Delete takes precedence..
-							return s2;
-						}
-						else if(s1 instanceof this.DeleteOp && s2 instanceof this.AddOp){
-							// Delete takes precedence..
-							return s1;
-						}
-						else{
-							throw "UnexpectedOpPairException";
-						}
-					}
-					else{
-						// Different items. No conflict possible. Choose either op.
-						return s2;
-					}
+				init: function(propName){
+					this._super(propName, new this.ListState({items:[]}), null);
 				},
 
 				add: function(item){
-					this.addOperation(new this.AddOp(item));
+					this.addOperation({type:"addOp", item:item});
 				},
 
 				delete: function(item){
-					this.addOperation(new this.DeleteOp(item));
+					this.addOperation({type:"deleteOp", item:item});
+				},
+
+				replace: function(item1, item2){
+					this.addOperation({type:"replaceOp", item1:item1, item2:item2});
+				},
+
+				clear: function(){
+					this.addOperation({type:"clearOp"});
 				},
 
 				eachItem: function(iter){
 					this.state.eachItem(iter);
 				},
 
-				destringifyState: function(s){
-					try{	   
-						var obj = JSON.parse(s);
-						var type = obj.type;
-						if(type == "ListState"){
-							var a = obj.items;
-							var items = [];
-							for(var i = 0; i < a.length; i++){
-								var item = this.builder.destringify(a[i]);
-								items.push(item);
-							}
-							return new this.ListState(items);
-						}
-						else {
-							return new this.ListState([]);
-						}
-					}
-					catch(e){
-						return new this.ListState([]);
-					}
+				reifyState: function(jsonObj){
+					return new this.ListState(jsonObj);
 				},
-
-				destringifyOperation: function(s){
-					try{
-						var obj = JSON.parse(s);
-						var type = obj.type;
-						if(type == "addOp"){
-							var item = this.builder.destringify(obj.item);
-							return new this.AddOp(item);
-						}
-						else if(type == "deleteOp"){
-							var item = this.builder.destringify(obj.item);
-							return new this.DeleteOp(item);
-						}
-						else{
-							return new this.NullOp();
-						}
-					}
-					catch(e){
-						return null;
-					}
-				},
-
-				AddOp: Class.extend(
-					{
-						init:function(item){
-							this.item = item;
-						},
-
-						applyTo: function(s){
-							var newS = s.copy();
-							newS.add(this.item);
-							return newS;
-						},
-
-						stringify: function(){
-							var obj = {
-								type: "addOp",
-								item: this.item.stringify()
-							};
-							return JSON.stringify(obj);
-						}
-					}),
-
-				DeleteOp: Class.extend(
-					{
-						init:function(item){
-							this.item = item;
-						},
-
-						applyTo: function(s){
-							var newS = s.copy();
-							newS.delete(item);
-							return newS;
-						},
-
-						stringify: function(){
-							var obj = {
-								type: "deleteOp",
-								item: item.stringify()
-							};
-							return JSON.stringify(obj);
-						}
-					}),
-				
-
 
 				ListState: Class.extend(
 					{
-						
-						init: function(_inItems){
-							var inItems = _inItems || [];
+						init: function(jsonObj){
+							var inItems = jsonObj.items;
 							this.items = [];
 							for(var i = 0; i < inItems.length; i++){
-								this.items.push(inItems[i].copy());
+								this.items.push(inItems[i]);
 							}
 						},
 
-						applyOperation: function(operation){
-							return operation.applyTo(this);
+						applyOperation: function(op){
+							if(op.type == "addOp"){
+								this.add(op.item);
+							}
+							else if(op.type == "deleteOp"){
+								this.remove(op.item);
+							}
+							else if(op.type == "replaceOp"){
+								this.replace(op.item1, op.item2);
+							}
+							else if(op.type == "clearOp"){
+								this.clear();
+							}
 						},
 
 						eachItem: function(iterator){
@@ -569,27 +533,61 @@ var JunctionProps = new (
 							}
 						},
 
-						stringify: function(){
-							var obj = {};
-							var a = [];
-							this.eachItem(function(ea){
-											  a.push(ea.stringify()); 
-										  });
-							obj.type = "ListState";
-							obj.items = a;
-							return JSON.stringify(obj);
+						toJSON: function(){
+							var obj = {
+								items: this.items
+							};
+							return obj;
+						},
+
+						hashCode: function(){
+							var code = 0;
+							for(var i = 0; i < this.items.length; i++){
+								code ^= this.items[i].id;
+							}
+							return code;
 						},
 
 						copy: function(){
-							return new JunctionProps.ListProp.prototype.ListState(this.items);
+							return new (JunctionProps.
+										ListProp.prototype.
+										ListState)(this.toJSON());
 						},
 
 						add: function(item){
 							this.items.push(item);
 						},
 
-						delete: function(item){
-							this.items.remove(item);
+						remove: function(item){
+							var index = -1;
+							for(var i = 0; i < this.items.length; i++){
+								var ea = this.items[i];
+								if(ea.id == item1.id){
+									index = i;
+									break;
+								}
+							}
+							if(index > -1){
+								this.items.splice(index, 1);
+							}
+						},
+
+						replace: function(item1, item2){
+							var index = -1;
+							for(var i = 0; i < this.items.length; i++){
+								var ea = this.items[i];
+								if(ea.id == item1.id){
+									index = i;
+									break;
+								}
+							}
+							if(index > -1){
+								this.items.splice(index, 1, item2);
+							}
+						},
+
+						clear: function(){
+							clearArray(this.items);
 						}
 
 					})

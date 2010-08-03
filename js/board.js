@@ -4,14 +4,16 @@ var DrawingBoard =
 				 {
 					 init: function(canvas, name, model){
 						 var self = this;
-						 this.granularity = 5;
+						 this.granularity = 3;
 						 this.isIPhone = (new RegExp( "iPhone", "i" )).test(
 							 window.navigator.userAgent
 						 );
-						 this.currentStroke = null;
 						 this.name = name;
+
+						 this.currentPoints = [];
 						 this.color = "#ff0000";
 						 this.strokeWidth = 5;
+
 						 this.moveCounter = 0;
 
 						 this.canvas = canvas;
@@ -58,48 +60,52 @@ var DrawingBoard =
 
 					 setStrokeWidth: function(width){
 						 this.strokeWidth = width;
-						 this.context.lineWidth   = this.strokeWidth;
+						 this.context.lineWidth = this.strokeWidth;
 					 },
 
 					 modelChanged: function(){
 						 var self = this;
 						 this.context.clearRect(0,0, $(this.canvas).width(), $(this.canvas).height());
-						 self.model.eachItem(function(s){
+						 this.model.eachItem(function(s){
 												 self.drawStroke(s);
 											 });
 					 },
 
 					 drawStroke: function(stroke){
-						 // In case user's stroke is interupted,
+						 // In case user's stroke is interrupted,
 						 // save away the current state..
-						 if(this.currentStroke){
-							 var curPoints = this.currentStroke.points;
-							 var curPoint = curPoints[curPoints.length - 1];
+						 var curX = 0;
+						 var curY = 0;
+
+						 if(this.currentPoints.length >= 2){
+							 curX = this.currentPoints[this.currentPoints.length - 1];
+							 curY = this.currentPoints[this.currentPoints.length - 2];
 						 }
 
 						 var points = stroke.points;
 						 this.context.strokeStyle = stroke.color;
 						 this.context.lineWidth = stroke.width;
 
-						 if(points.length > 0){
-							 var p = points[0];
+						 var x1, y1, x2, y2;
+						 if(points.length >= 4){
 							 this.context.beginPath();
-							 this.context.moveTo(p.x, p.y);
-							 for(var i = 1; i < points.length; i++){
-								 p = points[i];
-								 this.context.lineTo(p.x, p.y);
-								 this.context.stroke();
+							 x1 = points[0];
+							 y1 = points[1];
+							 this.context.moveTo(x1,y1);
+							 for(var i = 2; i < points.length; i += 2){
+								 x2 = points[i];
+								 y2 = points[i + 1];
+								 this.context.lineTo(x2,y2);
+								 this.context.moveTo(x2,y2);
 							 }
+							 this.context.stroke();
 						 }
+
 
 						 // Restore saved state
 						 this.context.strokeStyle = this.color;
 						 this.context.lineWidth   = this.strokeWidth;
-						 if(this.currentStroke){
-							 if(curPoint){
-								 this.context.moveTo(curPoint.x, curPoint.y);
-							 }
-						 }
+						 this.context.moveTo(curX, curY);
 					 },
 
 					 penDown: function (rawEv) {
@@ -107,8 +113,7 @@ var DrawingBoard =
 						 var ev = this.getPlatformEvent(rawEv);
 						 this.context.beginPath();
 						 this.context.moveTo(ev.localX, ev.localY);
-						 this.currentStroke = new BoardProp.prototype.Stroke(
-							 this.color, this.strokeWidth, []).addPoint(ev.localX, ev.localY);
+						 this.currentPoints = [ev.localX, ev.localY];
 						 this.moveCounter = 0;
 						 $(this.canvas).bind((this.isIPhone ? "touchmove" : "mousemove"), function(ev){ self.penMove(ev);});
 						 $(this.canvas).bind((this.isIPhone ? "touchend" : "mouseup"), function(ev){ self.penUp(ev);});
@@ -119,14 +124,15 @@ var DrawingBoard =
 						 if((this.moveCounter % this.granularity) == 0){
 							 this.context.lineTo(ev.localX, ev.localY);
 							 this.context.stroke();
-							 this.currentStroke = this.currentStroke.addPoint(ev.localX,ev.localY);
+							 this.currentPoints.push(ev.localX);
+							 this.currentPoints.push(ev.localY);
 						 }
 						 this.moveCounter++;
 					 },
 
 
 					 penUp: function (rawEv) {
-						 this.model.addStroke(this.currentStroke);
+						 this.model.add(this.model.newStroke(this.color, this.strokeWidth, this.currentPoints));
 						 $(this.canvas).unbind((this.isIPhone ? "touchmove" : "mousemove"));
 						 $(this.canvas).unbind((this.isIPhone ? "touchend" : "mouseup"));
 					 },
@@ -201,7 +207,7 @@ var DrawingBoard =
 				 var model = new BoardProp("whiteboard_model");
 
 				 var boardClient = {
-					 roles: ["buddy"],
+					 roles: ["participant"],
 					 onMessageReceived: function(msg, header) {
 						 if(msg.text){
 							 alert(msg.text);
@@ -218,11 +224,11 @@ var DrawingBoard =
 
 
 				 var ascript = {
-					 host: "openjunction.org",
+					 host: "sb.openjunction.org",
 					 ad: "edu.stanford.junction.whiteboard",
 					 friendlyName: "White Board",
 					 roles: { "buddy": {"platforms" : { /* platform definitions */ }}},
-					 sessionID: "jxwhiteboard_session"
+					 sessionID: "whiteboard"
 				 };
 
 				 var jx = JX.newJunction(ascript, boardClient);
