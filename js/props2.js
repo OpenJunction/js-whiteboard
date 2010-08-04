@@ -482,7 +482,7 @@ var JunctionProps = new (
 					this.addOperation({type:"addOp", item:item});
 				},
 
-				delete: function(item){
+				remove: function(item){
 					this.addOperation({type:"deleteOp", item:item});
 				},
 

@@ -53,7 +53,6 @@ function _JX(){
 	var createXMPPConnection = function(hostURL, onConnect) {
 		var _jid='junction';
 		var _pw='junction';
-
 		var connection = new Strophe.Connection('http://' + hostURL + '/http-bind');
 		connection.connect(_jid, _pw, onConnect);
 		return connection;
@@ -420,11 +419,9 @@ function _JX(){
 
 
 			_onConnect: function(status){
-				
 				var self = this;
 
 				if (status == Strophe.Status.CONNECTED) {
-
 					var old = window.onbeforeunload;
 					var discon =
 						function() {

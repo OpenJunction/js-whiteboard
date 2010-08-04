@@ -693,7 +693,7 @@ var JunctionProps = new (
 					this.addOperation(new this.AddOp(item));
 				},
 
-				delete: function(item){
+				remove: function(item){
 					this.addOperation(new this.DeleteOp(item));
 				},
 
@@ -773,7 +773,7 @@ var JunctionProps = new (
 
 						applyTo: function(s){
 							var newS = s.copy();
-							newS.delete(item);
+							newS.remove(item);
 							return newS;
 						},
 
@@ -828,7 +828,7 @@ var JunctionProps = new (
 							this.items.push(item);
 						},
 
-						delete: function(item){
+						remove: function(item){
 							this.items.remove(item);
 						}
 

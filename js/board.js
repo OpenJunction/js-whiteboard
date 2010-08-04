@@ -159,7 +159,7 @@ var DrawingBoard =
 				 var board;
 
 				 canvas.style.display = "none";
-
+				 
 				 var isIPhone = (new RegExp( "iPhone", "i" )).test(
 					 window.navigator.userAgent
 				 );
