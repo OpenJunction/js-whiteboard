@@ -283,7 +283,7 @@ var JunctionProps = new (
 							break;
 						}
 						default:
-							this.logErr("NORM mode: Unrecognized message, "  + rawMsg);
+							this.logInfo("NORM mode: Ignoring message, "  + msg);
 						}
 						break;
 					case this.MODE_SYNC:
