@@ -5,9 +5,9 @@ var DrawingBoard =
 					 init: function(canvas, name, model){
 						 var self = this;
 						 this.granularity = 3;
-						 this.isIPhone = (new RegExp( "iPhone", "i" )).test(
-							 window.navigator.userAgent
-						 );
+						 var agent = window.navigator.userAgent;
+						 this.isIOS = (new RegExp( "iPhone", "i" )).test(agent) || 
+							 (new RegExp( "iPad", "i" )).test(agent);
 						 this.name = name;
 
 						 this.currentPoints = [];
@@ -38,7 +38,7 @@ var DrawingBoard =
 														}});
 
 						 $(this.canvas).bind(
-							 (this.isIPhone ? "touchstart" : "mousedown"),
+							 (this.isIOS ? "touchstart" : "mousedown"),
 							 function(event){
 								 self.penDown(event);
 								 // Return FALSE to prevent the default behavior
@@ -115,8 +115,8 @@ var DrawingBoard =
 						 this.context.moveTo(ev.localX, ev.localY);
 						 this.currentPoints = [ev.localX, ev.localY];
 						 this.moveCounter = 0;
-						 $(this.canvas).bind((this.isIPhone ? "touchmove" : "mousemove"), function(ev){ self.penMove(ev);});
-						 $(this.canvas).bind((this.isIPhone ? "touchend" : "mouseup"), function(ev){ self.penUp(ev);});
+						 $(this.canvas).bind((this.isIOS ? "touchmove" : "mousemove"), function(ev){ self.penMove(ev);});
+						 $(this.canvas).bind((this.isIOS ? "touchend" : "mouseup"), function(ev){ self.penUp(ev);});
 					 },
 
 					 penMove: function (rawEv) {
@@ -133,8 +133,8 @@ var DrawingBoard =
 
 					 penUp: function (rawEv) {
 						 this.model.add(this.model.newStroke(this.color, this.strokeWidth, this.currentPoints));
-						 $(this.canvas).unbind((this.isIPhone ? "touchmove" : "mousemove"));
-						 $(this.canvas).unbind((this.isIPhone ? "touchend" : "mouseup"));
+						 $(this.canvas).unbind((this.isIOS ? "touchmove" : "mousemove"));
+						 $(this.canvas).unbind((this.isIOS ? "touchend" : "mouseup"));
 					 },
 
 
@@ -145,7 +145,7 @@ var DrawingBoard =
 						 // to keep this demo simple, just grab the first
 						 // available touch event.
 
-						 var ev = this.isIPhone ? window.event.targetTouches[0] : rawEv;
+						 var ev = this.isIOS ? window.event.targetTouches[0] : rawEv;
 						 ev.localX = ev.pageX - ev.target.offsetLeft;
 						 ev.localY = ev.pageY - ev.target.offsetTop;
 
@@ -160,12 +160,12 @@ var DrawingBoard =
 
 				 canvas.style.display = "none";
 				 
-				 var isIPhone = (new RegExp( "iPhone", "i" )).test(
+				 var isIOS = (new RegExp( "iPhone", "i" )).test(
 					 window.navigator.userAgent
 				 );
 
 				 // Init the color picker
-				 if(isIPhone){
+				 if(isIOS){
 					 $('#colorSelector').hide();
 				 }
 				 else{
